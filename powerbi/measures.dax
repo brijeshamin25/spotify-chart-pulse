@@ -1,0 +1,158 @@
+// ============================================================
+//  Chart Pulse - DAX measures
+//  Create a blank table called "_Measures" (Enter Data > OK)
+//  and add each of these as a New Measure on it.
+//  Folder names in [brackets] are just how I grouped them.
+// ============================================================
+
+
+// ---------- [Core] ----------
+
+Chart Days =
+COUNTROWS ( fact_chart_daily )
+// one row = one song on the chart for one day
+
+Songs Charted =
+DISTINCTCOUNT ( fact_chart_daily[song_id] )
+
+Artists Charted =
+VAR SongsInView = VALUES ( fact_chart_daily[song_id] )
+RETURN
+    CALCULATE (
+        DISTINCTCOUNT ( bridge_song_artist[artist_id] ),
+        TREATAS ( SongsInView, bridge_song_artist[song_id] )
+    )
+
+Avg Chart Position =
+AVERAGE ( fact_chart_daily[position] )
+
+Best Position =
+MIN ( fact_chart_daily[position] )
+
+Number 1 Days =
+SUM ( fact_chart_daily[is_number1] )
+
+Top 10 Days =
+SUM ( fact_chart_daily[is_top10] )
+
+Number 1 Songs =
+CALCULATE (
+    DISTINCTCOUNT ( fact_chart_daily[song_id] ),
+    fact_chart_daily[is_number1] = 1
+)
+
+
+// ---------- [Movement] ----------
+
+New Entries =
+// The first day of data counts every song as a "debut", which isn't real,
+// so it's excluded here.
+VAR FirstDay = CALCULATE ( MIN ( fact_chart_daily[date] ), REMOVEFILTERS () )
+RETURN
+    CALCULATE (
+        SUM ( fact_chart_daily[is_debut] ),
+        fact_chart_daily[date] > FirstDay
+    )
+
+Re-entries =
+SUM ( fact_chart_daily[is_reentry] )
+
+Avg Daily Move =
+AVERAGE ( fact_chart_daily[position_change] )
+
+Biggest One-Day Climb =
+MAX ( fact_chart_daily[position_change] )
+
+Songs On Latest Chart =
+VAR LastDay = MAX ( fact_chart_daily[date] )
+RETURN
+    CALCULATE (
+        DISTINCTCOUNT ( fact_chart_daily[song_id] ),
+        fact_chart_daily[date] = LastDay
+    )
+
+
+// ---------- [Longevity] ----------
+
+Avg Run Length (days) =
+AVERAGEX (
+    VALUES ( fact_chart_daily[song_id] ),
+    CALCULATE ( COUNTROWS ( fact_chart_daily ) )
+)
+
+Median Run Length (days) =
+MEDIANX (
+    VALUES ( dim_song[song_id] ),
+    CALCULATE ( MAX ( dim_song[days_on_chart] ) )
+)
+
+Flash Hit % =
+// share of songs that lasted a week or less
+DIVIDE (
+    CALCULATE ( COUNTROWS ( dim_song ), dim_song[days_on_chart] <= 7 ),
+    COUNTROWS ( dim_song )
+)
+
+Evergreen Songs =
+CALCULATE ( COUNTROWS ( dim_song ), dim_song[days_on_chart] > 180 )
+
+Catalog Share % =
+// chart days taken up by songs released before 2020
+DIVIDE (
+    CALCULATE ( [Chart Days], dim_song[catalog_song] = 1 ),
+    [Chart Days]
+)
+
+Explicit Share % =
+DIVIDE (
+    CALCULATE ( [Chart Days], dim_song[is_explicit] = 1 ),
+    [Chart Days]
+)
+
+Median Days Release to Chart =
+MEDIANX (
+    FILTER ( dim_song, dim_song[already_charting_at_start] = 0 ),
+    dim_song[days_release_to_chart]
+)
+
+
+// ---------- [Artists] ----------
+// These rely on the bridge_song_artist -> dim_song relationship
+// being set to cross-filter "Both" (see docs/build_guide.md).
+
+Artist Share of Chart % =
+// Shares across artists add up to more than 100% because a collab
+// counts for every artist on it. That's intended.
+DIVIDE (
+    [Chart Days],
+    CALCULATE ( [Chart Days], REMOVEFILTERS ( dim_artist ) )
+)
+
+Artist Rank =
+IF (
+    HASONEVALUE ( dim_artist[artist] ),
+    RANKX ( ALLSELECTED ( dim_artist[artist] ), [Chart Days], , DESC, DENSE )
+)
+
+Lead Artist Chart Days =
+// only songs where this artist is first-credited
+CALCULATE ( [Chart Days], bridge_song_artist[is_lead_artist] = 1 )
+
+Featured Chart Days =
+[Chart Days] - [Lead Artist Chart Days]
+
+
+// ---------- [Labels] ----------
+
+Artist Page Title =
+"Chart footprint: " & SELECTEDVALUE ( dim_artist[artist], "all artists" )
+
+Song Page Title =
+VAR s = SELECTEDVALUE ( dim_song[song] )
+VAR a = SELECTEDVALUE ( dim_song[artist_credit] )
+RETURN
+    IF ( ISBLANK ( s ), "Pick a song", s & "  —  " & a )
+
+Date Range Label =
+FORMAT ( MIN ( dim_date[date] ), "d mmm yyyy" ) & " to "
+    & FORMAT ( MAX ( dim_date[date] ), "d mmm yyyy" )
